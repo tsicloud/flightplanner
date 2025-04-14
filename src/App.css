@@ -3,52 +3,24 @@
   margin: 0 auto;
   padding: 20px;
 }
-
 .inputs {
   display: flex;
   gap: 10px;
   margin-bottom: 20px;
 }
-
 .inputs input,
 .inputs button {
   padding: 8px;
   font-size: 16px;
 }
-
 .columns {
   display: flex;
   gap: 20px;
   overflow-x: auto;
 }
-
 .column {
   border: 1px solid #ccc;
   padding: 10px;
   min-width: 250px;
   background: #f9f9f9;
-}
-
-.flight {
-  margin-bottom: 10px;
-}
-
-.flight span {
-  font-size: 0.9em;
-  color: #555;
-}
-
-.seat-input {
-  width: 60px;
-  margin: 5px 5px 0 0;
-}
-
-button {
-  padding: 5px 10px;
-  cursor: pointer;
-}
-
-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
 }
