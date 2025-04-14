@@ -10,7 +10,6 @@ function App() {
   const [columns, setColumns] = useState([{ airport: null, flights: [] }]);
 
   const handleStartCitySubmit = () => {
-    // Placeholder until DB works
     setColumns([{ airport: startCity, flights: [] }]);
   };
 
