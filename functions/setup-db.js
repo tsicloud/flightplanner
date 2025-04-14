@@ -1,13 +1,47 @@
 export async function onRequest(context) {
   try {
+    // Check binding
     if (!context.env.DB) {
-      return new Response(JSON.stringify({ error: 'D1 database binding not found' }), { status: 500 });
+      return new Response(
+        JSON.stringify({ error: 'D1 binding missing' }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
+      );
     }
 
-    await context.env.DB.exec(CREATE TABLE IF NOT EXISTS flights (id INTEGER PRIMARY KEY));
+    // Create flights table
+    await context.env.DB.exec(`
+      CREATE TABLE IF NOT EXISTS flights (
+        key TEXT PRIMARY KEY,
+        data TEXT,
+        timestamp INTEGER
+      )
+    `);
+    
+    // Create flight_seats table
+    await context.env.DB.exec(`
+      CREATE TABLE IF NOT EXISTS flight_seats (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        flight_key TEXT NOT NULL UNIQUE,
+        seats_available INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
 
-    return new Response(JSON.stringify({ message: 'Minimal table setup complete' }), { status: 200 });
+    // Create indexes
+    await context.env.DB.exec(`
+      CREATE INDEX IF NOT EXISTS idx_timestamp ON flights(timestamp);
+      CREATE INDEX IF NOT EXISTS idx_flight_key ON flight_seats(flight_key);
+      CREATE INDEX IF NOT EXISTS idx_updated_at ON flight_seats(updated_at)
+    `);
+
+    return new Response(
+      JSON.stringify({ message: 'Database setup complete' }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    );
   } catch (error) {
-    return new Response(JSON.stringify({ error: 'Setup failed - more specifically has not changed', details: error.message }), { status: 500 });
+    return new Response(
+      JSON.stringify({ error: 'Setup failed', details: error.message }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
+    );
   }
 }
