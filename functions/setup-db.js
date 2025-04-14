@@ -1,34 +1,37 @@
 export async function onRequest(context) {
   try {
-    // Verify binding
+    // Check binding
     if (!context.env.DB) {
       return new Response(
-        JSON.stringify({ error: 'D1 database binding not found' }),
+        JSON.stringify({ error: 'D1 binding missing' }),
         { status: 500, headers: { 'Content-Type': 'application/json' } }
       );
     }
 
-    // Create tables
+    // Create flights table
     await context.env.DB.exec(`
       CREATE TABLE IF NOT EXISTS flights (
         key TEXT PRIMARY KEY,
         data TEXT,
         timestamp INTEGER
-      );
-
+      )
+    `);
+    
+    // Create flight_seats table
+    await context.env.DB.exec(`
       CREATE TABLE IF NOT EXISTS flight_seats (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         flight_key TEXT NOT NULL UNIQUE,
         seats_available INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
-      );
+      )
     `);
 
-    // Create indexes separately to avoid batch issues
+    // Create indexes
     await context.env.DB.exec(`
       CREATE INDEX IF NOT EXISTS idx_timestamp ON flights(timestamp);
       CREATE INDEX IF NOT EXISTS idx_flight_key ON flight_seats(flight_key);
-      CREATE INDEX IF NOT EXISTS idx_updated_at ON flight_seats(updated_at);
+      CREATE INDEX IF NOT EXISTS idx_updated_at ON flight_seats(updated_at)
     `);
 
     return new Response(
