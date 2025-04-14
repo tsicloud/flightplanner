@@ -19,24 +19,28 @@ export async function onRequestGet(context) {
       );
     }
 
-    // Check DB cache (24h)
+    // Check cache (48h)
+    const cacheKey = `${start}${dest}_${date}`;
     const cached = await context.env.DB.prepare(
       `SELECT data FROM flights WHERE key LIKE ? AND timestamp > ?`
     )
-      .bind(`${start}${dest}%_${date}`, Date.now() - 24 * 60 * 60 * 1000)
+      .bind(`${cacheKey}%`, Date.now() - 48 * 60 * 60 * 1000)
       .all();
     if (cached.results.length > 0) {
       return new Response(
-        JSON.stringify({ flights: cached.results.map(r => JSON.parse(r.data)) }),
+        JSON.stringify({ flights: cached.results.map(r => JSON.parse(r.data)), source: 'cache' }),
         { status: 200, headers: { 'Content-Type': 'application/json' } }
       );
     }
 
     // Query AviationStack
     const url = `http://api.aviationstack.com/v1/flights?access_key=${apiKey}&dep_iata=${start}&arr_iata=${dest}&flight_date=${date}`;
-    const response = await fetch(url);
+    const response = await fetch(url, {
+      headers: { 'User-Agent': 'flightplanner/1.0' }
+    });
     if (!response.ok) {
-      throw new Error(`AviationStack error: ${response.statusText}`);
+      const text = await response.text();
+      throw new Error(`AviationStack error: ${response.status} ${response.statusText} - ${text}`);
     }
     const data = await response.json();
     if (data.error) {
@@ -45,7 +49,7 @@ export async function onRequestGet(context) {
 
     if (!data.data || data.data.length === 0) {
       return new Response(
-        JSON.stringify({ flights: [] }),
+        JSON.stringify({ flights: [], source: 'api' }),
         { status: 200, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -83,7 +87,7 @@ export async function onRequestGet(context) {
     }
 
     return new Response(
-      JSON.stringify({ flights: flights.map(f => JSON.parse(f.data)) }),
+      JSON.stringify({ flights: flights.map(f => JSON.parse(f.data)), source: 'api' }),
       { status: 200, headers: { 'Content-Type': 'application/json' } }
     );
   } catch (error) {
