@@ -8,6 +8,6 @@ export async function onRequest(context) {
 
     return new Response(JSON.stringify({ message: 'Minimal table setup complete' }), { status: 200 });
   } catch (error) {
-    return new Response(JSON.stringify({ error: 'Setup failed', details: error.message }), { status: 500 });
+    return new Response(JSON.stringify({ error: 'Setup failed - more specifically has not changed', details: error.message }), { status: 500 });
   }
 }
