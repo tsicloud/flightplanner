@@ -17,6 +17,6 @@
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
     "vite": "^5.4.8",
-    "@cloudflare/wrangler": "3.78.0"
+    "@cloudflare/wrangler": "3.30.0"
   }
 }
