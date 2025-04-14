@@ -19,12 +19,12 @@ export async function onRequestGet(context) {
       );
     }
 
-    // Check cache (48h)
+    // Check cache (72h)
     const cacheKey = `${start}${dest}_${date}`;
     const cached = await context.env.DB.prepare(
       `SELECT data FROM flights WHERE key LIKE ? AND timestamp > ?`
     )
-      .bind(`${cacheKey}%`, Date.now() - 48 * 60 * 60 * 1000)
+      .bind(`${cacheKey}%`, Date.now() - 72 * 60 * 60 * 1000)
       .all();
     if (cached.results.length > 0) {
       return new Response(
@@ -38,13 +38,20 @@ export async function onRequestGet(context) {
     const response = await fetch(url, {
       headers: { 'User-Agent': 'flightplanner/1.0' }
     });
+    const status = `${response.status} ${response.statusText}`;
     if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`AviationStack error: ${response.status} ${response.statusText} - ${text}`);
+      let details = await response.text();
+      try {
+        const json = JSON.parse(details);
+        details = json.error?.message || JSON.stringify(json);
+      } catch (e) {
+        details = `Non-JSON response: ${details}`;
+      }
+      throw new Error(`AviationStack error: ${status} - ${details}`);
     }
     const data = await response.json();
     if (data.error) {
-      throw new Error(`AviationStack: ${data.error.message || 'Unknown error'}`);
+      throw new Error(`AviationStack: ${data.error.message || JSON.stringify(data.error)}`);
     }
 
     if (!data.data || data.data.length === 0) {
