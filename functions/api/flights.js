@@ -1,6 +1,9 @@
 export async function onRequestGet(context) {
   try {
-    const { start, dest, date } = context.request.url.searchParams;
+    const { searchParams } = new URL(context.request.url);
+    const start = searchParams.get('start');
+    const dest = searchParams.get('dest');
+    const date = searchParams.get('date');
     if (!start || !dest || !date) {
       return new Response(
         JSON.stringify({ error: 'Missing start, dest, or date' }),
@@ -16,10 +19,29 @@ export async function onRequestGet(context) {
       );
     }
 
+    // Check DB cache (24h)
+    const cached = await context.env.DB.prepare(
+      `SELECT data FROM flights WHERE key LIKE ? AND timestamp > ?`
+    )
+      .bind(`${start}${dest}%_${date}`, Date.now() - 24 * 60 * 60 * 1000)
+      .all();
+    if (cached.results.length > 0) {
+      return new Response(
+        JSON.stringify({ flights: cached.results.map(r => JSON.parse(r.data)) }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
     // Query AviationStack
     const url = `http://api.aviationstack.com/v1/flights?access_key=${apiKey}&dep_iata=${start}&arr_iata=${dest}&flight_date=${date}`;
     const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`AviationStack error: ${response.statusText}`);
+    }
     const data = await response.json();
+    if (data.error) {
+      throw new Error(`AviationStack: ${data.error.message || 'Unknown error'}`);
+    }
 
     if (!data.data || data.data.length === 0) {
       return new Response(
@@ -29,31 +51,35 @@ export async function onRequestGet(context) {
     }
 
     // Store flights
-    const flights = data.data.map(flight => ({
-      key: `${flight.flight.iata}_${flight.flight_date}`,
-      data: JSON.stringify({
-        flight_number: flight.flight.iata,
-        departure: flight.departure.iata,
-        arrival: flight.arrival.iata,
-        departure_time: flight.departure.scheduled,
-        arrival_time: flight.arrival.scheduled
-      }),
-      timestamp: Date.now()
-    }));
+    const flights = data.data
+      .filter(flight => flight.flight && flight.flight.iata && flight.departure && flight.arrival)
+      .map(flight => ({
+        key: `${flight.flight.iata}_${flight.flight_date}`,
+        data: JSON.stringify({
+          flight_number: flight.flight.iata,
+          departure: flight.departure.iata,
+          arrival: flight.arrival.iata,
+          departure_time: flight.departure.scheduled || '',
+          arrival_time: flight.arrival.scheduled || ''
+        }),
+        timestamp: Date.now()
+      }));
 
     for (const flight of flights) {
-      await context.env.DB.prepare(
-        `INSERT OR REPLACE INTO flights (key, data, timestamp) VALUES (?, ?, ?)`
-      )
-        .bind(flight.key, flight.data, flight.timestamp)
-        .run();
-
-      // Mock seats (replace with real data later)
-      await context.env.DB.prepare(
-        `INSERT OR REPLACE INTO flight_seats (flight_key, seats_available, updated_at) VALUES (?, ?, ?)`
-      )
-        .bind(flight.key, Math.floor(Math.random() * 10), Date.now())
-        .run();
+      try {
+        await context.env.DB.prepare(
+          `INSERT OR IGNORE INTO flights (key, data, timestamp) VALUES (?, ?, ?)`
+        )
+          .bind(flight.key, flight.data, flight.timestamp)
+          .run();
+        await context.env.DB.prepare(
+          `INSERT OR IGNORE INTO flight_seats (flight_key, seats_available, updated_at) VALUES (?, ?, ?)`
+        )
+          .bind(flight.key, Math.floor(Math.random() * 10), Date.now())
+          .run();
+      } catch (dbError) {
+        console.error(`DB error for ${flight.key}: ${dbError.message}`);
+      }
     }
 
     return new Response(
