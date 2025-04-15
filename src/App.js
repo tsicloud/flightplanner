@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import axios from 'axios';
 import moment from 'moment';
-import 'moment-timezone'; // Import moment-timezone
+import 'moment-timezone';
 import './App.css';
 
 function App() {
@@ -61,12 +61,12 @@ function App() {
         {columns.map((col, i) => (
           <div key={i} className="column">
             <h3>{col.airport || 'Select Airport'}</h3>
-            {col.flights.length > 0 ? (
+            {col.fights.length > 0 ? (
               <ul>
                 {col.flights.map((flight, j) => (
                   <li key={j}>
                     {flight.flight_number}: {flight.departure} → {flight.arrival}{' '}
-                    ({moment.tz(flight.departure_time, flight.departure_timezone).format('MMM D, HH:mm')})
+                    ({moment.utc(flight.departure_time).format('MMM D, HH:mm')})
                   </li>
                 ))}
               </ul>
