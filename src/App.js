@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import axios from 'axios';
 import moment from 'moment';
+import 'moment-timezone'; // Import moment-timezone
 import './App.css';
 
 function App() {
   const [startCity, setStartCity] = useState('');
   const [destCity, setDestCity] = useState('');
-  const [date, setDate] = useState('2025-04-15');
+  const [date, setDate] = useState('');
   const [columns, setColumns] = useState([{ airport: null, flights: [] }]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -49,6 +50,7 @@ function App() {
           type="date"
           value={date}
           onChange={(e) => setDate(e.target.value)}
+          min={moment().format('YYYY-MM-DD')}
         />
         <button onClick={handleStartCitySubmit} disabled={loading}>
           {loading ? 'Loading...' : 'Start Planning'}
@@ -64,7 +66,7 @@ function App() {
                 {col.flights.map((flight, j) => (
                   <li key={j}>
                     {flight.flight_number}: {flight.departure} → {flight.arrival}{' '}
-                    ({moment(flight.departure_time).format('MMM D, HH:mm')})
+                    ({moment.tz(flight.departure_time, flight.departure_timezone).format('MMM D, HH:mm')})
                   </li>
                 ))}
               </ul>
