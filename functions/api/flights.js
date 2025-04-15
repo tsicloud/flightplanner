@@ -1,128 +1,177 @@
-export async function onRequestGet(context) {
+// functions/api/flights.js
+const fetch = require('node-fetch');
+const fs = require('fs').promises;
+const path = require('path');
+
+// Configuration
+const API_KEY = process.env.AVIATIONSTACK_API_KEY || 'YOUR_API_KEY'; // Replace with your key or use .env
+const BASE_URL = 'http://api.aviationstack.com/v1/flights';
+const CACHE_FILE = path.join(__dirname, 'flights_cache.json');
+
+// Helper to fetch flights with pagination or higher limit
+async function fetchFlights(params) {
   try {
-    const { searchParams } = new URL(context.request.url);
-    const start = searchParams.get('start');
-    const dest = searchParams.get('dest');
-    const date = searchParams.get('date');
-    if (!start || !dest || !date) {
-      return new Response(
-        JSON.stringify({ error: 'Missing start, dest, or date' }),
-        { status: 400, headers: { 'Content-Type': 'application/json' } }
-      );
+    const query = new URLSearchParams({
+      access_key: API_KEY,
+      ...params,
+    }).toString();
+    const response = await fetch(`${BASE_URL}?${query}`, {
+      headers: { 'User-Agent': 'NonRevPlanner/1.0' }, // Identify your app
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error ${response.status}: ${await response.text()}`);
     }
 
-    const apiKey = context.env.AVIATIONSTACK_KEY;
-    if (!apiKey) {
-      return new Response(
-        JSON.stringify({ error: 'API key missing' }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // Check cache (72h)
-    const cacheKey = `${start}${dest}_${date}`;
-    const cached = await context.env.DB.prepare(
-      `SELECT data FROM flights WHERE key LIKE ? AND timestamp > ?`
-    )
-      .bind(`${cacheKey}%`, Date.now() - 72 * 60 * 60 * 1000)
-      .all();
-    if (cached.results.length > 0) {
-      return new Response(
-        JSON.stringify({ flights: cached.results.map(r => JSON.parse(r.data)), source: 'cache' }),
-        { status: 200, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // Query AviationStack
-    let allFlights = [];
-    let offset = 0;
-    const limit = 100;
-
-    while (true) {
-      const url = `http://api.aviationstack.com/v1/flights?access_key=${apiKey}&dep_iata=${start}&arr_iata=${dest}&flight_date=${date}&offset=${offset}&limit=${limit}`;
-      const response = await fetch(url, {
-        headers: { 'User-Agent': 'flightplanner/1.0' }
-      });
-      const status = `${response.status} ${response.statusText}`;
-      if (!response.ok) {
-        let details = await response.text();
-        try {
-          const json = JSON.parse(details);
-          details = json.error?.message || JSON.stringify(json);
-        } catch (e) {
-          details = `Non-JSON response: ${details}`;
-        }
-        throw new Error(`AviationStack error: ${status} - ${details}`);
-      }
-      const data = await response.json();
-      if (data.error) {
-        throw new Error(`AviationStack: ${data.error.message || JSON.stringify(data.error)}`);
-      }
-
-      console.log('AviationStack raw response:', JSON.stringify({ pagination: data.pagination, flight_count: data.data?.length || 0 }));
-
-      if (!data.data || data.data.length === 0) {
-        break;
-      }
-
-      allFlights.push(...data.data);
-      offset += limit;
-      if (offset >= data.pagination.total) {
-        break;
-      }
-    }
-
-    if (allFlights.length === 0) {
-      return new Response(
-        JSON.stringify({ flights: [], source: 'api', note: 'No flights returned by AviationStack' }),
-        { status: 200, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // Store flights
-    const flights = allFlights
-      .filter(flight => flight.departure?.iata === start && flight.arrival?.iata === dest)
-      .map(flight => ({
-        key: `${flight.flight?.iata || 'UNKNOWN'}_${flight.flight_date}`,
-        data: JSON.stringify({
-          flight_number: flight.flight?.iata || 'UNKNOWN',
-          departure: flight.departure?.iata || start,
-          arrival: flight.arrival?.iata || dest,
-          departure_time: flight.departure?.scheduled || '',
-          arrival_time: flight.arrival?.scheduled || '',
-          departure_timezone: flight.departure?.timezone || 'UTC'
-        }),
-        timestamp: Date.now()
-      }));
-
-    console.log('Processed flights:', JSON.stringify({ flight_count: flights.length, flights }));
-
-    for (const flight of flights) {
-      try {
-        await context.env.DB.prepare(
-          `INSERT OR IGNORE INTO flights (key, data, timestamp) VALUES (?, ?, ?)`
-        )
-          .bind(flight.key, flight.data, flight.timestamp)
-          .run();
-        await context.env.DB.prepare(
-          `INSERT OR IGNORE INTO flight_seats (flight_key, seats_available, updated_at) VALUES (?, ?, ?)`
-        )
-          .bind(flight.key, Math.floor(Math.random() * 10), Date.now())
-          .run();
-      } catch (dbError) {
-        console.error(`DB error for ${flight.key}: ${dbError.message}`);
-      }
-    }
-
-    return new Response(
-      JSON.stringify({ flights: flights.map(f => JSON.parse(f.data)), source: 'api' }),
-      { status: 200, headers: { 'Content-Type': 'application/json' } }
-    );
+    const data = await response.json();
+    return data;
   } catch (error) {
-    console.error('Error in flights:', error.message);
-    return new Response(
-      JSON.stringify({ error: 'Flight fetch failed', details: error.message }),
-      { status: 500, headers: { 'Content-Type': 'application/json' } }
-    );
+    console.error('API Error:', error.message);
+    return null;
   }
 }
+
+// Helper to cache results to save API quota
+async function cacheFlights(data) {
+  try {
+    await fs.writeFile(CACHE_FILE, JSON.stringify(data, null, 2));
+    console.log('Cached flights to', CACHE_FILE);
+  } catch (error) {
+    console.error('Cache Error:', error.message);
+  }
+}
+
+// Helper to read cached flights
+async function readCachedFlights() {
+  try {
+    const data = await fs.readFile(CACHE_FILE, 'utf-8');
+    return JSON.parse(data);
+  } catch (error) {
+    return null;
+  }
+}
+
+// Main function to get flights
+async function getFlights(req, res) {
+  try {
+    // Base parameters for JFK departures
+    const baseParams = {
+      dep_iata: 'JFK',
+      flight_date: '2025-04-15', // Your target date
+    };
+
+    // Option 1: Try higher limit (200)
+    console.log('Attempting fetch with limit=200...');
+    let params = { ...baseParams, limit: 200 };
+    let data = await fetchFlights(params);
+
+    // Check if limit=200 worked
+    if (data && data.pagination && data.pagination.count > 100) {
+      console.log(`Success: Retrieved ${data.pagination.count} flights (total: ${data.pagination.total})`);
+      await cacheFlights(data);
+      return processFlights(data, res);
+    } else {
+      console.warn('Limit=200 failed or same as 100, trying pagination...');
+    }
+
+    // Option 2: Paginate with offset=100
+    params = { ...baseParams, limit: 100, offset: 100 };
+    data = await fetchFlights(params);
+
+    if (data && data.data && data.data.length > 0) {
+      console.log(`Pagination success: Retrieved ${data.pagination.count} more flights`);
+      // Combine with cached data if available
+      const cached = await readCachedFlights();
+      if (cached) {
+        data.data = [...cached.data, ...data.data];
+        data.pagination.total = Math.max(
+          cached.pagination.total,
+          data.pagination.offset + data.pagination.count
+        );
+      }
+      await cacheFlights(data);
+      return processFlights(data, res);
+    } else {
+      console.warn('Pagination returned no new flights');
+      // Fallback to cached data or original 100
+      data = await readCachedFlights() || await fetchFlights({ ...baseParams, limit: 100 });
+      if (!data) {
+        throw new Error('No flights retrieved and no cache available');
+      }
+    }
+
+    return processFlights(data, res);
+  } catch (error) {
+    console.error('Error in getFlights:', error.message);
+    res.status(500).json({
+      error: 'Failed to fetch flights',
+      message: error.message,
+      suggestion: 'Check API key, quota, or try a closer date (e.g., tomorrow).',
+    });
+  }
+}
+
+// Process and format flights, prioritizing Delta/United for non-rev
+function processFlights(data, res) {
+  if (!data || !data.data) {
+    return res.status(400).json({ error: 'Invalid API response' });
+  }
+
+  // Deduplicate flights by flight number and date
+  const seen = new Set();
+  const flights = data.data
+    .filter(flight => {
+      const key = `${flight.flight.iata}-${flight.flight_date}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .map(flight => ({
+      airline: flight.airline.name,
+      flight_number: flight.flight.iata || flight.flight.number,
+      departure: {
+        airport: flight.departure.airport,
+        iata: flight.departure.iata,
+        scheduled: flight.departure.scheduled,
+        terminal: flight.departure.terminal || 'N/A',
+      },
+      arrival: {
+        airport: flight.arrival.airport,
+        iata: flight.arrival.iata,
+        scheduled: flight.arrival.scheduled,
+      },
+      status: flight.flight_status,
+      isDeltaOrUnited: ['Delta Air Lines', 'United Airlines'].includes(flight.airline.name),
+    }))
+    .sort((a, b) => a.departure.scheduled.localeCompare(b.departure.scheduled));
+
+  // Separate Delta/United for non-rev priority
+  const deltaUnited = flights.filter(f => f.isDeltaOrUnited);
+  const others = flights.filter(f => !f.isDeltaOrUnited);
+
+  res.json({
+    flights: [...deltaUnited, ...others],
+    total_flights: flights.length,
+    pagination: data.pagination,
+    note: data.pagination.total > flights.length
+      ? 'More flights may exist. Try increasing limit or paginating.'
+      : 'All available flights retrieved.',
+  });
+}
+
+// Export for Netlify/Cloudflare Functions
+module.exports = {
+  handler: async (event, context) => {
+    const req = {
+      query: event.queryStringParameters || {},
+      method: event.httpMethod,
+    };
+    const res = {
+      status: (code) => ({
+        json: (data) => ({ statusCode: code, body: JSON.stringify(data) }),
+      }),
+      json: (data) => ({ statusCode: 200, body: JSON.stringify(data) }),
+    };
+    return await getFlights(req, res);
+  },
+};
