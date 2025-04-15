@@ -7,7 +7,7 @@ const path = require('path');
 const API_KEY = process.env.AVIATIONSTACK_API_KEY || 'YOUR_API_KEY'; // Use .env or replace
 const BASE_URL = 'http://api.aviationstack.com/v1/flights';
 const CACHE_FILE = path.join(__dirname, 'flights_cache.json');
-const MAX_PAGES = 3; // Test up to 300 flights (3 x 100)
+const MAX_PAGES = 10; // Test up to 1,000 flights (10 x 100)
 const LIMIT = 100; // Basic plan max
 
 // Helper to fetch flights
@@ -57,7 +57,7 @@ async function readCachedFlights() {
 // Main function to get flights
 async function getFlights(req, res) {
   try {
-    // Base parameters
+    // Base parameters for all JFK departures
     const baseParams = {
       dep_iata: 'JFK',
       flight_date: '2025-04-15',
@@ -116,7 +116,7 @@ async function getFlights(req, res) {
     res.status(500).json({
       error: 'Failed to fetch flights',
       message: error.message,
-      suggestion: 'Check API quota, try a closer date, or contact AviationStack support.',
+      suggestion: 'Check API quota, try a closer date (e.g., 2025-04-16), or contact AviationStack support.',
     });
   }
 }
@@ -137,14 +137,15 @@ function processFlights(data, res, apiCalls) {
       return true;
     })
     .map(flight => ({
-      id: `${flight.flight.iata}-${flight.flight_date}`, // DB-friendly unique ID
+      id: `${flight.flight.iata}-${flight.flight_date}`, // DB unique key
       airline: flight.airline.name,
       flight_number: flight.flight.iata || flight.flight.number,
       departure: {
         airport: flight.departure.airport,
         iata: flight.departure.iata,
         scheduled: flight.departure.scheduled,
-        terminal: flight.departure.terminal || 'N/A',
+        terminal: flight.departure.terminal || null,
+        gate: flight.departure.gate || null,
       },
       arrival: {
         airport: flight.arrival.airport,
@@ -152,19 +153,20 @@ function processFlights(data, res, apiCalls) {
         scheduled: flight.arrival.scheduled,
       },
       status: flight.flight_status,
-      isDeltaOrUnited: ['Delta Air Lines', 'United Airlines'].includes(flight.airline.name),
-      updated_at: new Date().toISOString(), // For DB freshness
+      aircraft: flight.aircraft?.model || null,
+      flight_date: flight.flight_date,
+      updated_at: new Date().toISOString(), // DB timestamp
     }))
     .sort((a, b) => a.departure.scheduled.localeCompare(b.departure.scheduled));
 
-  // Prioritize Delta/United
-  const deltaUnited = flights.filter(f => f.isDeltaOrUnited);
-  const others = flights.filter(f => !f.isDeltaOrUnited);
+  // Count JFK → LAX flights for debugging
+  const laxFlights = flights.filter(f => f.arrival.iata === 'LAX');
 
   res.json({
-    flights: [...deltaUnited, ...others],
+    flights,
     total_flights: flights.length,
     api_calls_used: apiCalls,
+    lax_flights: laxFlights.length, // Track JFK → LAX count
     pagination: {
       count: flights.length,
       total: data.pagination.total,
