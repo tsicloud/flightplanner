@@ -54,7 +54,7 @@ export async function onRequestGet(context) {
       throw new Error(`AviationStack: ${data.error.message || JSON.stringify(data.error)}`);
     }
 
-    console.log('AviationStack raw response:', JSON.stringify(data.data)); // Debug log
+    console.log('AviationStack raw response:', JSON.stringify(data.data));
 
     if (!data.data || data.data.length === 0) {
       return new Response(
@@ -63,7 +63,7 @@ export async function onRequestGet(context) {
       );
     }
 
-    // Store flights (relaxed filtering)
+    // Store flights
     const flights = data.data
       .filter(flight => flight.departure?.iata === start && flight.arrival?.iata === dest)
       .map(flight => ({
@@ -73,12 +73,13 @@ export async function onRequestGet(context) {
           departure: flight.departure?.iata || start,
           arrival: flight.arrival?.iata || dest,
           departure_time: flight.departure?.scheduled || '',
-          arrival_time: flight.arrival?.scheduled || ''
+          arrival_time: flight.arrival?.scheduled || '',
+          departure_timezone: flight.departure?.timezone || 'UTC' // Add timezone
         }),
         timestamp: Date.now()
       }));
 
-    console.log('Processed flights:', JSON.stringify(flights)); // Debug log
+    console.log('Processed flights:', JSON.stringify(flights));
 
     for (const flight of flights) {
       try {
@@ -102,7 +103,7 @@ export async function onRequestGet(context) {
       { status: 200, headers: { 'Content-Type': 'application/json' } }
     );
   } catch (error) {
-    console.error('Error in flights:', error.message); // Debug log
+    console.error('Error in flights:', error.message);
     return new Response(
       JSON.stringify({ error: 'Flight fetch failed', details: error.message }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }
