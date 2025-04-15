@@ -34,29 +34,45 @@ export async function onRequestGet(context) {
     }
 
     // Query AviationStack
-    const url = `http://api.aviationstack.com/v1/flights?access_key=${apiKey}&dep_iata=${start}&arr_iata=${dest}&flight_date=${date}`;
-    const response = await fetch(url, {
-      headers: { 'User-Agent': 'flightplanner/1.0' }
-    });
-    const status = `${response.status} ${response.statusText}`;
-    if (!response.ok) {
-      let details = await response.text();
-      try {
-        const json = JSON.parse(details);
-        details = json.error?.message || JSON.stringify(json);
-      } catch (e) {
-        details = `Non-JSON response: ${details}`;
+    let allFlights = [];
+    let offset = 0;
+    const limit = 100;
+
+    while (true) {
+      const url = `http://api.aviationstack.com/v1/flights?access_key=${apiKey}&dep_iata=${start}&arr_iata=${dest}&flight_date=${date}&offset=${offset}&limit=${limit}`;
+      const response = await fetch(url, {
+        headers: { 'User-Agent': 'flightplanner/1.0' }
+      });
+      const status = `${response.status} ${response.statusText}`;
+      if (!response.ok) {
+        let details = await response.text();
+        try {
+          const json = JSON.parse(details);
+          details = json.error?.message || JSON.stringify(json);
+        } catch (e) {
+          details = `Non-JSON response: ${details}`;
+        }
+        throw new Error(`AviationStack error: ${status} - ${details}`);
       }
-      throw new Error(`AviationStack error: ${status} - ${details}`);
-    }
-    const data = await response.json();
-    if (data.error) {
-      throw new Error(`AviationStack: ${data.error.message || JSON.stringify(data.error)}`);
+      const data = await response.json();
+      if (data.error) {
+        throw new Error(`AviationStack: ${data.error.message || JSON.stringify(data.error)}`);
+      }
+
+      console.log('AviationStack raw response:', JSON.stringify({ pagination: data.pagination, flight_count: data.data?.length || 0 }));
+
+      if (!data.data || data.data.length === 0) {
+        break;
+      }
+
+      allFlights.push(...data.data);
+      offset += limit;
+      if (offset >= data.pagination.total) {
+        break;
+      }
     }
 
-    console.log('AviationStack raw response:', JSON.stringify(data.data));
-
-    if (!data.data || data.data.length === 0) {
+    if (allFlights.length === 0) {
       return new Response(
         JSON.stringify({ flights: [], source: 'api', note: 'No flights returned by AviationStack' }),
         { status: 200, headers: { 'Content-Type': 'application/json' } }
@@ -64,7 +80,7 @@ export async function onRequestGet(context) {
     }
 
     // Store flights
-    const flights = data.data
+    const flights = allFlights
       .filter(flight => flight.departure?.iata === start && flight.arrival?.iata === dest)
       .map(flight => ({
         key: `${flight.flight?.iata || 'UNKNOWN'}_${flight.flight_date}`,
@@ -74,12 +90,12 @@ export async function onRequestGet(context) {
           arrival: flight.arrival?.iata || dest,
           departure_time: flight.departure?.scheduled || '',
           arrival_time: flight.arrival?.scheduled || '',
-          departure_timezone: flight.departure?.timezone || 'UTC' // Add timezone
+          departure_timezone: flight.departure?.timezone || 'UTC'
         }),
         timestamp: Date.now()
       }));
 
-    console.log('Processed flights:', JSON.stringify(flights));
+    console.log('Processed flights:', JSON.stringify({ flight_count: flights.length, flights }));
 
     for (const flight of flights) {
       try {
