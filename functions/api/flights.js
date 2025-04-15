@@ -1,14 +1,11 @@
-// functions/api/flights.js
-const fetch = require('node-fetch');
-const fs = require('fs').promises;
-const path = require('path');
-
-// Configuration
-const API_KEY = process.env.AVIATIONSTACK_API_KEY || 'YOUR_API_KEY'; // Use .env or replace
+// src/index.js
+const API_KEY = 'YOUR_API_KEY'; // Replace or use wrangler.toml secrets
 const BASE_URL = 'http://api.aviationstack.com/v1/flights';
-const CACHE_FILE = path.join(__dirname, 'flights_cache.json');
-const MAX_PAGES = 10; // Test up to 1,000 flights (10 x 100)
+const MAX_PAGES = 10; // Up to 1,000 flights
 const LIMIT = 100; // Basic plan max
+
+// In-memory cache (resets per Worker instance; use KV for persistence)
+let cache = null;
 
 // Helper to fetch flights
 async function fetchFlights(params, pageNum) {
@@ -34,35 +31,21 @@ async function fetchFlights(params, pageNum) {
   }
 }
 
-// Helper to cache results
-async function cacheFlights(data) {
-  try {
-    await fs.writeFile(CACHE_FILE, JSON.stringify(data, null, 2));
-    console.log('Cached flights to', CACHE_FILE);
-  } catch (error) {
-    console.error('Cache Error:', error.message);
-  }
-}
-
-// Helper to read cache
-async function readCachedFlights() {
-  try {
-    const data = await fs.readFile(CACHE_FILE, 'utf-8');
-    return JSON.parse(data);
-  } catch (error) {
-    return null;
-  }
-}
-
 // Main function to get flights
-async function getFlights(req, res) {
+async function getFlights() {
   try {
-    // Base parameters for all JFK departures
+    // Base parameters
     const baseParams = {
       dep_iata: 'JFK',
       flight_date: '2025-04-15',
       limit: LIMIT,
     };
+
+    // Use cache if available
+    if (cache) {
+      console.log('Serving cached flights');
+      return processFlights(cache, 0);
+    }
 
     let allFlights = [];
     let totalApiCalls = 0;
@@ -92,39 +75,30 @@ async function getFlights(req, res) {
     }
 
     if (allFlights.length === 0) {
-      // Fallback to cache
-      const cached = await readCachedFlights();
-      if (cached && cached.data) {
-        console.log('Serving cached flights');
-        allFlights = cached.data;
-        totalReported = cached.pagination.total;
-      } else {
-        throw new Error('No flights retrieved and no cache available');
-      }
+      throw new Error('No flights retrieved');
     }
 
-    // Cache combined results
-    const cachedData = {
+    // Cache results
+    cache = {
       data: allFlights,
       pagination: { count: allFlights.length, total: totalReported },
     };
-    await cacheFlights(cachedData);
 
-    return processFlights(cachedData, res, totalApiCalls);
+    return processFlights(cache, totalApiCalls);
   } catch (error) {
     console.error('Error in getFlights:', error.message);
-    res.status(500).json({
+    return {
       error: 'Failed to fetch flights',
       message: error.message,
       suggestion: 'Check API quota, try a closer date (e.g., 2025-04-16), or contact AviationStack support.',
-    });
+    };
   }
 }
 
 // Process and format flights
-function processFlights(data, res, apiCalls) {
+function processFlights(data, apiCalls) {
   if (!data || !data.data) {
-    return res.status(400).json({ error: 'Invalid API response' });
+    return { error: 'Invalid API response' };
   }
 
   // Deduplicate by flight number and date
@@ -137,7 +111,7 @@ function processFlights(data, res, apiCalls) {
       return true;
     })
     .map(flight => ({
-      id: `${flight.flight.iata}-${flight.flight_date}`, // DB unique key
+      id: `${flight.flight.iata}-${flight.flight_date}`,
       airline: flight.airline.name,
       flight_number: flight.flight.iata || flight.flight.number,
       departure: {
@@ -155,18 +129,18 @@ function processFlights(data, res, apiCalls) {
       status: flight.flight_status,
       aircraft: flight.aircraft?.model || null,
       flight_date: flight.flight_date,
-      updated_at: new Date().toISOString(), // DB timestamp
+      updated_at: new Date().toISOString(),
     }))
     .sort((a, b) => a.departure.scheduled.localeCompare(b.departure.scheduled));
 
-  // Count JFK → LAX flights for debugging
+  // Count JFK → LAX
   const laxFlights = flights.filter(f => f.arrival.iata === 'LAX');
 
-  res.json({
+  return {
     flights,
     total_flights: flights.length,
     api_calls_used: apiCalls,
-    lax_flights: laxFlights.length, // Track JFK → LAX count
+    lax_flights: laxFlights.length,
     pagination: {
       count: flights.length,
       total: data.pagination.total,
@@ -174,22 +148,15 @@ function processFlights(data, res, apiCalls) {
     note: data.pagination.total > flights.length
       ? `More flights may exist. Try offset=${flights.length}.`
       : 'All available flights retrieved.',
-  });
+  };
 }
 
-// Export for serverless
-module.exports = {
-  handler: async (event, context) => {
-    const req = {
-      query: event.queryStringParameters || {},
-      method: event.httpMethod,
-    };
-    const res = {
-      status: (code) => ({
-        json: (data) => ({ statusCode: code, body: JSON.stringify(data) }),
-      }),
-      json: (data) => ({ statusCode: 200, body: JSON.stringify(data) }),
-    };
-    return await getFlights(req, res);
+// Cloudflare Worker entrypoint
+export default {
+  async fetch(request, env, ctx) {
+    const result = await getFlights();
+    return new Response(JSON.stringify(result), {
+      headers: { 'Content-Type': 'application/json' },
+    });
   },
 };
