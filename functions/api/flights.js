@@ -54,27 +54,31 @@ export async function onRequestGet(context) {
       throw new Error(`AviationStack: ${data.error.message || JSON.stringify(data.error)}`);
     }
 
+    console.log('AviationStack raw response:', JSON.stringify(data.data)); // Debug log
+
     if (!data.data || data.data.length === 0) {
       return new Response(
-        JSON.stringify({ flights: [], source: 'api' }),
+        JSON.stringify({ flights: [], source: 'api', note: 'No flights returned by AviationStack' }),
         { status: 200, headers: { 'Content-Type': 'application/json' } }
       );
     }
 
-    // Store flights
+    // Store flights (relaxed filtering)
     const flights = data.data
-      .filter(flight => flight.flight && flight.flight.iata && flight.departure && flight.arrival)
+      .filter(flight => flight.departure?.iata === start && flight.arrival?.iata === dest)
       .map(flight => ({
-        key: `${flight.flight.iata}_${flight.flight_date}`,
+        key: `${flight.flight?.iata || 'UNKNOWN'}_${flight.flight_date}`,
         data: JSON.stringify({
-          flight_number: flight.flight.iata,
-          departure: flight.departure.iata,
-          arrival: flight.arrival.iata,
-          departure_time: flight.departure.scheduled || '',
-          arrival_time: flight.arrival.scheduled || ''
+          flight_number: flight.flight?.iata || 'UNKNOWN',
+          departure: flight.departure?.iata || start,
+          arrival: flight.arrival?.iata || dest,
+          departure_time: flight.departure?.scheduled || '',
+          arrival_time: flight.arrival?.scheduled || ''
         }),
         timestamp: Date.now()
       }));
+
+    console.log('Processed flights:', JSON.stringify(flights)); // Debug log
 
     for (const flight of flights) {
       try {
@@ -98,6 +102,7 @@ export async function onRequestGet(context) {
       { status: 200, headers: { 'Content-Type': 'application/json' } }
     );
   } catch (error) {
+    console.error('Error in flights:', error.message); // Debug log
     return new Response(
       JSON.stringify({ error: 'Flight fetch failed', details: error.message }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }
